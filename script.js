@@ -186,6 +186,22 @@ const initThreeJS = () => {
     if (state !== "IDLE") return;
     state = "FORMING"; // 直接进入组成阶段
 
+    // 尝试请求重力感应权限 (iOS 13+)
+    if (
+      typeof DeviceOrientationEvent !== "undefined" &&
+      typeof DeviceOrientationEvent.requestPermission === "function"
+    ) {
+      DeviceOrientationEvent.requestPermission()
+        .then((permissionState) => {
+          if (permissionState === "granted") {
+            window.addEventListener("deviceorientation", handleOrientation);
+          }
+        })
+        .catch(console.error);
+    } else {
+      window.addEventListener("deviceorientation", handleOrientation);
+    }
+
     tip.style.display = "none";
     scene.remove(launcher);
     if (bgMusic) {
@@ -252,6 +268,29 @@ const initThreeJS = () => {
   let mouseX = 0,
     mouseY = 0;
   let time = 0;
+
+  // 重力感应处理函数
+  const handleOrientation = (event) => {
+    const gamma = event.gamma; // 左到右 -90 到 90
+    const beta = event.beta; // 前到后 -180 到 180
+
+    if (gamma === null || beta === null) return;
+
+    // 限制角度范围，避免过度旋转
+    const clampedGamma = Math.max(-45, Math.min(45, gamma));
+    const clampedBeta = Math.max(15, Math.min(105, beta)); // 假设手机竖持，倾斜范围
+
+    // 映射到 mouseX/mouseY 的范围 (-0.5 到 0.5 左右)
+    // gamma: 0 -> 0, -45 -> -0.5, 45 -> 0.5
+    mouseX = clampedGamma / 90;
+
+    // beta: 60度为中心点 (手机自然手持角度)
+    // 60 -> 0, 15 -> 0.5 (向上看), 105 -> -0.5 (向下看)
+    // 注意：原来的 mouseY 逻辑是 (e.clientY - height/2). 鼠标在上方(y小) -> mouseY负 -> camera.y变大(向上)
+    // 这里 beta 小 (手机向后仰/屏幕朝上) -> 类似鼠标在上方
+    mouseY = (beta - 60) / 90;
+  };
+
   document.addEventListener("mousemove", (e) => {
     mouseX = (e.clientX - window.innerWidth / 2) * 0.001;
     mouseY = (e.clientY - window.innerHeight / 2) * 0.001;
