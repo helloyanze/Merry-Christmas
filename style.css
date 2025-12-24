@@ -1,0 +1,19 @@
+@import url("https://fonts.googleapis.com/css2?family=Mountains+of+Christmas:wght@400;700&display=swap");
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  background: radial-gradient(circle at center, #1b2735 0%, #090a0f 100%); /* 深邃夜空背景 */
+  overflow: hidden;
+  font-family: "Mountains of Christmas", cursive;
+}
+
+#canvas-container {
+  width: 100%;
+  height: 100%;
+}
