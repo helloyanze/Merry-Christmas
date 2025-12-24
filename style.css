@@ -11,6 +11,7 @@ body {
   background: radial-gradient(circle at center, #1b2735 0%, #090a0f 100%); /* 深邃夜空背景 */
   overflow: hidden;
   font-family: "ZCOOL KuaiLe", cursive;
+  touch-action: none; /* 禁止移动端默认滚动 */
 }
 
 #canvas-container {

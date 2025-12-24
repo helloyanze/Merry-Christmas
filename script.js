@@ -47,10 +47,17 @@ const initThreeJS = () => {
   // 3. 粒子系统
   const particleCount = 2000;
   const geometry = new THREE.BufferGeometry();
-  const positions = [];
+  
+  // 初始化数组
+  const positions = new Float32Array(particleCount * 3);
   const colors = [];
   const sizes = [];
   const particleTargets = [];
+  
+  // 物理系统数组
+  const targetPositions = new Float32Array(particleCount * 3); // Tween的目标位置（"家"）
+  const velocities = new Float32Array(particleCount * 3);      // 物理速度
+  const physicsOffsets = new Float32Array(particleCount * 3);  // 物理偏移
 
   const colorPalette = [
     new THREE.Color("#ff0000"),
@@ -65,7 +72,14 @@ const initThreeJS = () => {
 
   for (let i = 0; i < particleCount; i++) {
     // 初始位置：全部在底部中心 (发射点)
-    positions.push(0, -30, 0);
+    positions[i * 3] = 0;
+    positions[i * 3 + 1] = -30;
+    positions[i * 3 + 2] = 0;
+    
+    // 初始化目标位置也为起点
+    targetPositions[i * 3] = 0;
+    targetPositions[i * 3 + 1] = -30;
+    targetPositions[i * 3 + 2] = 0;
 
     const color = colorPalette[Math.floor(Math.random() * colorPalette.length)];
     colors.push(color.r, color.g, color.b);
@@ -88,10 +102,7 @@ const initThreeJS = () => {
     });
   }
 
-  geometry.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(positions, 3)
-  );
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   geometry.setAttribute("size", new THREE.Float32BufferAttribute(sizes, 1));
 
@@ -182,11 +193,68 @@ const initThreeJS = () => {
   // --- 状态与动画 ---
   let state = "IDLE";
 
+  // 渲染循环变量
+  let mouseX = 0,
+    mouseY = 0;
+  let time = 0;
+
+  // --- 交互逻辑 (Raycaster & Physics) ---
+  const raycaster = new THREE.Raycaster();
+  raycaster.params.Points.threshold = 5.0; // 增大检测半径
+  const pointer = new THREE.Vector2(999, 999);
+  
+  // 鼠标移动向量 (NDC)
+  let lastPointerX = 999;
+  let lastPointerY = 999;
+  let pointerVelocity = new THREE.Vector2(0, 0);
+
+  // 备份原始粒子大小
+  const originalSizes = new Float32Array(sizes);
+
+  function onPointerMove(event) {
+    const clientX = event.clientX || (event.touches ? event.touches[0].clientX : 0);
+    const clientY = event.clientY || (event.touches ? event.touches[0].clientY : 0);
+
+    const newX = (clientX / window.innerWidth) * 2 - 1;
+    const newY = -(clientY / window.innerHeight) * 2 + 1;
+
+    // 计算鼠标速度
+    if (lastPointerX !== 999) {
+        pointerVelocity.x = newX - lastPointerX;
+        pointerVelocity.y = newY - lastPointerY;
+    }
+    
+    pointer.x = newX;
+    pointer.y = newY;
+    
+    lastPointerX = newX;
+    lastPointerY = newY;
+
+    if (!event.touches) {
+      mouseX = (clientX - window.innerWidth / 2) * 0.001;
+      mouseY = (clientY - window.innerHeight / 2) * 0.001;
+    }
+  }
+
+  // 绑定交互事件
+  document.addEventListener("mousemove", onPointerMove);
+  document.addEventListener("touchmove", onPointerMove, { passive: false });
+
+  // 重力感应处理
+  const handleOrientation = (event) => {
+    const gamma = event.gamma;
+    const beta = event.beta;
+    if (gamma === null || beta === null) return;
+    const clampedGamma = Math.max(-45, Math.min(45, gamma));
+    const clampedBeta = Math.max(15, Math.min(105, beta)); 
+    mouseX = clampedGamma / 90;
+    mouseY = (beta - 60) / 90;
+  };
+
   const startShow = () => {
     if (state !== "IDLE") return;
-    state = "FORMING"; // 直接进入组成阶段
+    state = "FORMING";
 
-    // 尝试请求重力感应权限 (iOS 13+)
     if (
       typeof DeviceOrientationEvent !== "undefined" &&
       typeof DeviceOrientationEvent.requestPermission === "function"
@@ -209,11 +277,8 @@ const initThreeJS = () => {
       bgMusic.play().catch((e) => console.log("Audio play failed", e));
     }
 
-    // 显示粒子和雪花
     material.opacity = 1;
     new TWEEN.Tween(snowMat).to({ opacity: 0.8 }, 2000).start();
-
-    // 直接开始生长
     animateTreeGrowth();
   };
 
@@ -221,14 +286,11 @@ const initThreeJS = () => {
   document.addEventListener("touchstart", startShow);
 
   function animateTreeGrowth() {
-    const posAttribute = geometry.attributes.position;
-
     particleTargets.forEach((target, i) => {
-      // 动画起始状态
       const animState = {
         r: 0,
-        theta: target.theta - Math.PI * 6, // 旋转3圈
-        y: -30, // 从发射点高度开始
+        theta: target.theta - Math.PI * 6,
+        y: -30,
       };
 
       const delay = i * 1.5;
@@ -246,11 +308,13 @@ const initThreeJS = () => {
         .delay(delay)
         .easing(TWEEN.Easing.Cubic.Out)
         .onUpdate(() => {
+          // 只更新目标位置，不直接操作 geometry
           const x = animState.r * Math.cos(animState.theta);
           const z = animState.r * Math.sin(animState.theta);
-
-          posAttribute.setXYZ(i, x, animState.y, z);
-          posAttribute.needsUpdate = true;
+          
+          targetPositions[i * 3] = x;
+          targetPositions[i * 3 + 1] = animState.y;
+          targetPositions[i * 3 + 2] = z;
         })
         .start();
     });
@@ -264,45 +328,84 @@ const initThreeJS = () => {
     }, particleCount * 1.5 + 2000);
   }
 
-  // 渲染循环
-  let mouseX = 0,
-    mouseY = 0;
-  let time = 0;
-
-  // 重力感应处理函数
-  const handleOrientation = (event) => {
-    const gamma = event.gamma; // 左到右 -90 到 90
-    const beta = event.beta; // 前到后 -180 到 180
-
-    if (gamma === null || beta === null) return;
-
-    // 限制角度范围，避免过度旋转
-    const clampedGamma = Math.max(-45, Math.min(45, gamma));
-    const clampedBeta = Math.max(15, Math.min(105, beta)); // 假设手机竖持，倾斜范围
-
-    // 映射到 mouseX/mouseY 的范围 (-0.5 到 0.5 左右)
-    // gamma: 0 -> 0, -45 -> -0.5, 45 -> 0.5
-    mouseX = clampedGamma / 90;
-
-    // beta: 60度为中心点 (手机自然手持角度)
-    // 60 -> 0, 15 -> 0.5 (向上看), 105 -> -0.5 (向下看)
-    // 注意：原来的 mouseY 逻辑是 (e.clientY - height/2). 鼠标在上方(y小) -> mouseY负 -> camera.y变大(向上)
-    // 这里 beta 小 (手机向后仰/屏幕朝上) -> 类似鼠标在上方
-    mouseY = (beta - 60) / 90;
-  };
-
-  document.addEventListener("mousemove", (e) => {
-    mouseX = (e.clientX - window.innerWidth / 2) * 0.001;
-    mouseY = (e.clientY - window.innerHeight / 2) * 0.001;
-  });
-
   const animate = (t) => {
     requestAnimationFrame(animate);
     TWEEN.update(t);
     time += 0.01;
 
+    // 自动旋转
     if (state === "FORMING") {
       particleSystem.rotation.y += 0.002;
+    }
+
+    if (state === "FORMING") {
+        raycaster.setFromCamera(pointer, camera);
+        const ray = raycaster.ray;
+
+        // 物理参数：纯流体无弹性
+        const repulsionRadius = 3.5;
+        const repulsionForce = 0.5;
+        const friction = 0.92;
+        const returnSpeed = 0.02; // 极缓慢的线性回归速度 (无弹簧力)
+
+        const positionsArray = geometry.attributes.position.array;
+        
+        // Ray 转到 Object Space
+        const inverseMatrix = new THREE.Matrix4().copy(particleSystem.matrixWorld).invert();
+        const localRay = ray.clone().applyMatrix4(inverseMatrix);
+        const closestPoint = new THREE.Vector3();
+
+        for (let i = 0; i < particleCount; i++) {
+            const idx = i * 3;
+            
+            // 粒子当前位置（含物理偏移）
+            const px = targetPositions[idx] + physicsOffsets[idx];
+            const py = targetPositions[idx + 1] + physicsOffsets[idx + 1];
+            const pz = targetPositions[idx + 2] + physicsOffsets[idx + 2];
+            const pVec = new THREE.Vector3(px, py, pz);
+
+            // 1. 计算鼠标排斥力 (只影响速度)
+            const distSq = localRay.distanceSqToPoint(pVec);
+            if (distSq < repulsionRadius * repulsionRadius) {
+                const dist = Math.sqrt(distSq);
+                localRay.closestPointToPoint(pVec, closestPoint);
+                const dir = new THREE.Vector3().subVectors(pVec, closestPoint).normalize();
+                if (dir.lengthSq() < 0.001) dir.set(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).normalize();
+                
+                const factor = (1 - dist / repulsionRadius);
+                const randomScale = 0.8 + Math.random() * 0.4;
+                
+                velocities[idx] += dir.x * factor * repulsionForce * randomScale;
+                velocities[idx + 1] += dir.y * factor * repulsionForce * randomScale;
+                velocities[idx + 2] += dir.z * factor * repulsionForce * randomScale;
+            }
+
+            // 2. 摩擦力 (自然减速)
+            velocities[idx] *= friction;
+            velocities[idx + 1] *= friction;
+            velocities[idx + 2] *= friction;
+
+            // 3. 更新偏移量 (由速度驱动)
+            physicsOffsets[idx] += velocities[idx];
+            physicsOffsets[idx + 1] += velocities[idx + 1];
+            physicsOffsets[idx + 2] += velocities[idx + 2];
+
+            // 4. 缓慢回归 (线性插值，无弹簧物理，模拟"飘"回去)
+            // 只有当没有受到强力推开(速度较小)时，才显现出回归效果，避免对抗
+            const speedSq = velocities[idx]*velocities[idx] + velocities[idx+1]*velocities[idx+1] + velocities[idx+2]*velocities[idx+2];
+            if (speedSq < 0.01) {
+                 physicsOffsets[idx] -= physicsOffsets[idx] * returnSpeed;
+                 physicsOffsets[idx + 1] -= physicsOffsets[idx + 1] * returnSpeed;
+                 physicsOffsets[idx + 2] -= physicsOffsets[idx + 2] * returnSpeed;
+            }
+
+            // 最终位置
+            positionsArray[idx] = targetPositions[idx] + physicsOffsets[idx];
+            positionsArray[idx + 1] = targetPositions[idx + 1] + physicsOffsets[idx + 1];
+            positionsArray[idx + 2] = targetPositions[idx + 2] + physicsOffsets[idx + 2];
+        }
+        
+        geometry.attributes.position.needsUpdate = true;
     }
 
     if (topStar.material.size > 0.1)
@@ -334,3 +437,4 @@ const initThreeJS = () => {
 };
 
 initThreeJS();
+
