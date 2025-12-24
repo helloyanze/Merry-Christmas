@@ -146,11 +146,11 @@ const initThreeJS = () => {
   const tip = document.createElement("div");
   tip.innerText = "点击 🎆 燃放烟花";
   tip.className =
-    "absolute z-30 text-white text-xl animate-pulse cursor-pointer";
+    "absolute z-30 text-white text-2xl animate-pulse cursor-pointer select-none";
   tip.style.bottom = "15%";
   tip.style.left = "50%";
   tip.style.transform = "translateX(-50%)";
-  tip.style.fontFamily = "'Mountains of Christmas', cursive";
+  tip.style.fontFamily = "'ZCOOL KuaiLe', cursive";
   document.body.appendChild(tip);
 
   // 下雪系统
